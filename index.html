@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Live Watchlist</title>
+<style>
+:root{--bg:#f6f8fa;--card:#fff;--tx:#14181f;--mut:#667085;--bd:#e3e8ef;--up:#0a8f4e;--dn:#d92d20;--ac:#1565c0;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0e1116;--card:#171b22;--tx:#e8ecf1;--mut:#8b95a5;--bd:#262c36;--up:#3ddc84;--dn:#ff6b60;--ac:#6ea8fe}}
+:root[data-theme="dark"]{--bg:#0e1116;--card:#171b22;--tx:#e8ecf1;--mut:#8b95a5;--bd:#262c36;--up:#3ddc84;--dn:#ff6b60;--ac:#6ea8fe}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:760px;margin:0 auto;padding:16px}
+h1{font-size:1.3rem;margin:0 0 4px}
+.sub{color:var(--mut);font-size:.8rem;margin:0 0 12px}
+.bar{display:flex;gap:8px;margin-bottom:12px}
+input{flex:1;min-width:0;padding:10px 12px;border:1px solid var(--bd);border-radius:8px;background:var(--card);color:var(--tx);font-size:1rem}
+.btn{padding:10px 14px;border:1px solid var(--bd);border-radius:8px;background:var(--card);color:var(--tx);cursor:pointer;font-size:.9rem}
+.btn:hover{border-color:var(--ac)}
+.list{background:var(--card);border:1px solid var(--bd);border-radius:10px;overflow:hidden}
+.row{display:grid;grid-template-columns:1fr 100px 80px 32px;align-items:center;gap:8px;padding:12px;border-bottom:1px solid var(--bd);cursor:pointer}
+.row:last-child{border-bottom:0}
+.row.sel{background:color-mix(in srgb,var(--ac) 10%,var(--card))}
+.nm b{display:block}
+.nm span{color:var(--mut);font-size:.78rem}
+.px,.chg{text-align:right;font-variant-numeric:tabular-nums}
+.row.up .px{color:var(--up)}.row.dn .px{color:var(--dn)}
+.chg.up{color:var(--up)}.chg.dn{color:var(--dn)}
+.x{border:0;background:none;color:var(--mut);font-size:1.2rem;cursor:pointer}
+.skel{height:56px;background:linear-gradient(90deg,var(--bd),var(--card),var(--bd));background-size:200% 100%;animation:sh 1.2s infinite}
+@keyframes sh{to{background-position:-200% 0}}
+.state{padding:14px;margin-bottom:12px;border-radius:8px;border:1px solid var(--bd);background:var(--card);display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.state.err{border-color:var(--dn);color:var(--dn)}
+.state p{margin:0}
+.chartbox{margin-top:12px;background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:12px}
+#ctitle{font-size:.85rem;color:var(--mut);margin:0 0 8px}
+canvas{width:100%;height:160px;display:block}
+@media (max-width:480px){.row{grid-template-columns:1fr 80px 66px 28px;padding:10px}.bar{flex-wrap:wrap}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Live Watchlist</h1>
+  <p class="sub">Simulated prices for demonstration only. Not real market data.</p>
+  <div class="bar">
+    <input id="q" type="search" placeholder="Search symbol or name" aria-label="Search watchlist">
+    <button class="btn" id="dc">Simulate disconnect</button>
+  </div>
+  <div id="state" class="state" hidden></div>
+  <div id="list" class="list"></div>
+  <div id="chartbox" class="chartbox" hidden>
+    <p id="ctitle"></p>
+    <canvas id="chart"></canvas>
+  </div>
+</div>
+<script>
+const SEED=[["RELIANCE","Reliance Industries",2940],["TCS","Tata Consultancy",3820],["INFY","Infosys",1540],["HDFCBANK","HDFC Bank",1650],["ITC","ITC Ltd",430],["SBIN","State Bank of India",790],["WIPRO","Wipro",480],["LT","Larsen & Toubro",3600]];
+let stocks=[],sel=null,mode="loading",q="";
+const $=id=>document.getElementById(id);
+const fmt=n=>n.toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2});
+function el(t,c,x){const e=document.createElement(t);if(c)e.className=c;if(x!==undefined)e.textContent=x;return e}
+function init(){stocks=SEED.map(([s,n,p])=>({s,n,open:p,p,h:[p],dir:""}))}
+function status(kind,msg,label,fn){
+  const s=$("state");s.replaceChildren();
+  if(!kind){s.hidden=true;return}
+  s.hidden=false;s.className="state "+kind;s.appendChild(el("p","",msg));
+  if(label){const b=el("button","btn",label);b.onclick=fn;s.appendChild(b)}
+}
+function render(){
+  const list=$("list");list.replaceChildren();
+  if(mode==="loading"){for(let i=0;i<6;i++)list.appendChild(el("div","row skel"));status();$("chartbox").hidden=true;return}
+  const vis=stocks.filter(x=>(x.s+x.n).toLowerCase().includes(q));
+  if(mode==="error")status("err","Connection lost. Prices are paused.","Retry",connect);
+  else if(!stocks.length)status("empty","Your watchlist is empty.","Reset list",()=>{init();render()});
+  else if(!vis.length)status("empty",'No symbols match "'+q+'".');
+  else status();
+  vis.forEach(x=>{
+    const ch=(x.p-x.open)/x.open*100;
+    const r=el("div","row"+(x.s===sel?" sel":"")+(x.dir?" "+x.dir:""));
+    r.tabIndex=0;r.onclick=()=>{sel=x.s;render()};
+    r.onkeydown=e=>{if(e.key==="Enter")r.click()};
+    const a=el("div","nm");a.append(el("b","",x.s),el("span","",x.n));
+    const d=el("button","x","\u00d7");d.setAttribute("aria-label","Remove "+x.s);
+    d.onclick=e=>{e.stopPropagation();stocks=stocks.filter(y=>y!==x);if(sel===x.s)sel=null;render()};
+    r.append(a,el("div","px",fmt(x.p)),el("div","chg "+(ch>=0?"up":"dn"),(ch>=0?"+":"")+ch.toFixed(2)+"%"),d);
+    list.appendChild(r);
+  });
+  drawChart();
+}
+function drawChart(){
+  const x=stocks.find(s=>s.s===sel)||stocks[0],c=$("chart"),box=$("chartbox");
+  if(!x){box.hidden=true;return}
+  box.hidden=false;sel=x.s;$("ctitle").textContent=x.s+" - last "+x.h.length+" ticks";
+  const w=c.clientWidth,h=c.clientHeight,r=window.devicePixelRatio||1;
+  c.width=w*r;c.height=h*r;const g=c.getContext("2d");g.scale(r,r);
+  const lo=Math.min(...x.h),hi=Math.max(...x.h),rg=(hi-lo)||1;
+  g.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue(x.p>=x.open?"--up":"--dn");
+  g.lineWidth=2;g.beginPath();
+  x.h.forEach((v,i)=>{const px=i/Math.max(x.h.length-1,1)*w,py=h-6-(v-lo)/rg*(h-12);i?g.lineTo(px,py):g.moveTo(px,py)});
+  g.stroke();
+}
+function tick(){
+  if(mode!=="live")return;
+  stocks.forEach(x=>{
+    const n=+(x.p*(1+(Math.random()-.5)*.004)).toFixed(2);
+    x.dir=n>x.p?"up":n<x.p?"dn":x.dir;x.p=n;x.h.push(n);if(x.h.length>40)x.h.shift();
+  });
+  render();
+}
+function connect(){mode="loading";render();setTimeout(()=>{mode="live";render()},900)}
+$("q").oninput=e=>{q=e.target.value.toLowerCase().trim();render()};
+$("dc").onclick=()=>{if(mode==="live"){mode="error";render()}};
+window.onresize=()=>{if(mode!=="loading")drawChart()};
+init();connect();setInterval(tick,1000);
+</script>
+</body>
+</html>
